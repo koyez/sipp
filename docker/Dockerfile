@@ -6,6 +6,8 @@ FROM alpine:3.20 AS build
 
 ARG FULL=''
 
+RUN set -eux && sed -i 's/dl-cdn.alpinelinux.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apk/repositories
+
 RUN apk add --no-cache \
   binutils \
   cmake \
@@ -49,5 +51,6 @@ FROM scratch AS bin
 COPY --from=build /sipp/sipp /sipp/sipp.1 /sipp/version.h /
 
 FROM alpine:3.20
+RUN set -eux && sed -i 's/dl-cdn.alpinelinux.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apk/repositories
 CMD ["sipp"]
 COPY --from=build /sipp/sipp /usr/local/bin/sipp
