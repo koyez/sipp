@@ -920,7 +920,15 @@ static unsigned long rtpstream_playrtptask(taskentry_t* taskinfo,
         if (taskinfo->video_loop_count)
         {
             target_timestamp = timenow_ms * taskinfo->video_timeticks_per_ms;
-            next_wake = timenow_ms + taskinfo->video_ms_per_packet - timenow_ms%taskinfo->video_ms_per_packet;
+            /* take the earliest wake time so slow video pacing does not
+               delay the audio stream catch-up (both share one task) */
+            {
+                unsigned long video_wake = timenow_ms + taskinfo->video_ms_per_packet - timenow_ms%taskinfo->video_ms_per_packet;
+                if (video_wake < next_wake)
+                {
+                    next_wake = video_wake;
+                }
+            }
             if (taskinfo->flags & (TI_NULL_VIDEOIP | TI_PAUSERTP | TI_PAUSERTPVPATTERN))
             {
                 /* when paused, set timestamp so stream appears to be up to date */
@@ -979,7 +987,10 @@ static unsigned long rtpstream_playrtptask(taskentry_t* taskinfo,
                     /* handle sending errors */
                     if ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == EINTR))
                     {
-                        next_wake = timenow_ms + 2; /* retry after short sleep */
+                        if (timenow_ms + 2 < next_wake)
+                        {
+                            next_wake = timenow_ms + 2; /* retry after short sleep */
+                        }
                     }
                     else
                     {
@@ -1129,7 +1140,10 @@ static unsigned long rtpstream_playrtptask(taskentry_t* taskinfo,
                     if (taskinfo->last_video_timestamp < target_timestamp)
                     {
                         /* no sleep if we are behind */
-                        next_wake = timenow_ms;
+                        if (timenow_ms < next_wake)
+                        {
+                            next_wake = timenow_ms;
+                        }
                     }
                 } /* if (rc < 0) */
                 pthread_mutex_unlock(&uacVideoMutex);
