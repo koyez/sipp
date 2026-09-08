@@ -2626,8 +2626,14 @@ void rtpstream_audioecho_thread(void* param)
                     rc = g_txUASAudio.processOutgoingPacket(seq_num, rtp_header, payload_data, audio_packet_out);
                     debugrefileaudio.printf("TXUASAUDIO -- processOutgoingPacket() rc == %d\n", rc);
                 }
+                else
+                {
+                    /* plain RTP (no SRTP): echo the received packet unchanged --
+                       audio_packet_out is otherwise empty and sendto() would fail (EFAULT) */
+                    audio_packet_out.assign(audio_packet_in.begin(), audio_packet_in.begin() + nr);
+                }
 
-                ns = sendto(sock, audio_packet_out.data(), sizeof(rtp_header_t) + g_txUASAudio.getSrtpPayloadSize() + g_txUASAudio.getAuthenticationTagSize(), MSG_DONTWAIT, (sockaddr *) (void *) &remote_rtp_addr, len);
+                ns = sendto(sock, audio_packet_out.data(), audio_packet_out.size(), MSG_DONTWAIT, (sockaddr *) (void *) &remote_rtp_addr, len);
 
                 if (ns != nr) {
                     debugrefileaudio.printf("DATA SUCCESSFULLY SENT [AUDIO] seq_num = [%u] -- MISMATCHED RECV/SENT BYTE COUNT -- errno = %d nr = %d ns = %d\n",
@@ -2807,8 +2813,14 @@ void rtpstream_videoecho_thread(void* param)
                     rc = g_txUASVideo.processOutgoingPacket(seq_num, rtp_header, payload_data, video_packet_out);
                     debugrefilevideo.printf("TXUASVIDEO -- processOutgoingPacket() rc == %d\n", rc);
                 }
+                else
+                {
+                    /* plain RTP (no SRTP): echo the received packet unchanged --
+                       video_packet_out is otherwise empty and sendto() would fail (EFAULT) */
+                    video_packet_out.assign(video_packet_in.begin(), video_packet_in.begin() + nr);
+                }
 
-                ns = sendto(sock, video_packet_out.data(), sizeof(rtp_header_t) + g_txUASVideo.getSrtpPayloadSize() + g_txUASVideo.getAuthenticationTagSize(), MSG_DONTWAIT, (sockaddr *) (void *) &remote_rtp_addr, len);
+                ns = sendto(sock, video_packet_out.data(), video_packet_out.size(), MSG_DONTWAIT, (sockaddr *) (void *) &remote_rtp_addr, len);
 
                 if (ns != nr) {
                     debugrefilevideo.printf("DATA SUCCESSFULLY SENT [VIDEO] seq_num = [%u] -- MISMATCHED RECV/SENT BYTE COUNT -- errno = %d nr = %d ns = %d\n",
