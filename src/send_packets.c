@@ -93,6 +93,58 @@ float2timer(float time, struct timeval *tvp)
     tvp->tv_usec = n * 100000;
 }
 
+static uint32_t checksum_add_network_bytes(const void* data, size_t len, uint32_t sum)
+{
+    const uint8_t* bytes = data;
+
+    while (len >= 2) {
+        sum += ((uint16_t)bytes[0] << 8) | bytes[1];
+        bytes += 2;
+        len -= 2;
+    }
+    if (len) {
+        sum += (uint16_t)bytes[0] << 8;
+    }
+    return sum;
+}
+
+static uint16_t udp_checksum(const struct sockaddr_storage* from,
+                             const struct sockaddr_storage* to,
+                             struct udphdr* udp, size_t udp_len)
+{
+    uint32_t sum = 0;
+    uint16_t result;
+
+    udp->uh_sum = 0;
+    if (media_ip_is_ipv6) {
+        const struct sockaddr_in6* from6 = (const struct sockaddr_in6*)from;
+        const struct sockaddr_in6* to6 = (const struct sockaddr_in6*)to;
+        const uint32_t len = htonl((uint32_t)udp_len);
+        const uint8_t next_header[4] = {0, 0, 0, IPPROTO_UDP};
+
+        sum = checksum_add_network_bytes(&from6->sin6_addr, sizeof(from6->sin6_addr), sum);
+        sum = checksum_add_network_bytes(&to6->sin6_addr, sizeof(to6->sin6_addr), sum);
+        sum = checksum_add_network_bytes(&len, sizeof(len), sum);
+        sum = checksum_add_network_bytes(next_header, sizeof(next_header), sum);
+    } else {
+        const struct sockaddr_in* from4 = (const struct sockaddr_in*)from;
+        const struct sockaddr_in* to4 = (const struct sockaddr_in*)to;
+        const uint16_t len = htons((uint16_t)udp_len);
+        const uint8_t protocol[2] = {0, IPPROTO_UDP};
+
+        sum = checksum_add_network_bytes(&from4->sin_addr, sizeof(from4->sin_addr), sum);
+        sum = checksum_add_network_bytes(&to4->sin_addr, sizeof(to4->sin_addr), sum);
+        sum = checksum_add_network_bytes(protocol, sizeof(protocol), sum);
+        sum = checksum_add_network_bytes(&len, sizeof(len), sum);
+    }
+    sum = checksum_add_network_bytes(udp, udp_len, sum);
+    while (sum >> 16) {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    result = (uint16_t)~sum;
+    return htons(result ? result : 0xffff);
+}
+
 int parse_play_args(const char* filename, const char *basepath, pcap_pkts* pkts)
 {
     pkts->file = find_file(filename, basepath);
@@ -157,7 +209,6 @@ void send_packets(play_args_t* play_args)
     struct udphdr *udp;
     struct sockaddr_in6 to6, from6;
     char buffer[PCAP_MAXPACKET];
-    int temp_sum;
     socklen_t len;
 
 #ifndef MSG_DONTWAIT
@@ -234,24 +285,7 @@ void send_packets(play_args_t* play_args)
         udp->uh_sport = htons(port_diff + ntohs(*from_port));
         udp->uh_dport = htons(port_diff + ntohs(*to_port));
 
-        if (!media_ip_is_ipv6) {
-            temp_sum = checksum_carry(
-                    pkt_index->partial_check +
-                    check((uint16_t *) &(((struct sockaddr_in *)(void *) from)->sin_addr.s_addr), 4) +
-                    check((uint16_t *) &(((struct sockaddr_in *)(void *) to)->sin_addr.s_addr), 4) +
-                    check((uint16_t *) &udp->uh_sport, 4));
-        } else {
-            temp_sum = checksum_carry(
-                    pkt_index->partial_check +
-                    check((uint16_t *) &(from6.sin6_addr.s6_addr), 16) +
-                    check((uint16_t *) &(to6.sin6_addr.s6_addr), 16) +
-                    check((uint16_t *) &udp->uh_sport, 4));
-        }
-#if !defined(_HPUX_LI) && defined(__HPUX)
-        udp->uh_sum = (temp_sum>>16)+((temp_sum & 0xffff)<<16);
-#else
-        udp->uh_sum = temp_sum;
-#endif
+        udp->uh_sum = udp_checksum(from, to, udp, pkt_index->pktlen);
 
         do_sleep ((struct timeval *) &pkt_index->ts, &last, &didsleep,
                   &start);
